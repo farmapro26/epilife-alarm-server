@@ -7,6 +7,7 @@
 // ============================================================================
 
 const express = require('express');
+const cors = require('cors');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
 
@@ -66,6 +67,7 @@ async function sendAlarmPush(fcmToken, med, time, uid) {
     },
     data: {
       type: 'ALARM',
+      uid: uid,
       medId: med.id || '',
       medName: med.name || '',
       dose: med.dose || '',
@@ -149,11 +151,65 @@ async function checkAlarms() {
 cron.schedule('* * * * *', checkAlarms, { timezone: 'America/Sao_Paulo' });
 console.log('[EpiLife] Cron de alarmes iniciado (verifica a cada minuto).');
 
-// ── 7. Servidor HTTP simples, so para health-check e manter o serviço vivo ─
+// ── 7. Servidor HTTP: health-check + endpoints acionados pela notificação ──
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 app.get('/', (req, res) => {
   const { dateStr, timeStr } = getNowSaoPaulo();
   res.json({ status: 'ok', service: 'epilife-alarm-server', now: `${dateStr} ${timeStr}` });
+});
+
+// Chamado quando o usuário toca "✔️ Tomei" na notificação — funciona mesmo
+// com o app fechado, porque grava direto no Firestore sem precisar abrir nada.
+app.post('/checkin', async (req, res) => {
+  try {
+    const { uid, medId, medName, dose, time } = req.body || {};
+    if (!uid || !medId || !time) return res.status(400).json({ error: 'uid, medId e time sao obrigatorios' });
+
+    const { dateStr } = getNowSaoPaulo();
+    const key = medId + '_' + time;
+
+    await db.collection('users').doc(uid).collection('checkins').add({
+      key: key,
+      date: dateStr,
+      at: new Date().toISOString(),
+      medName: medName || '',
+      dose: dose || '',
+      time: time
+    });
+
+    console.log(`[EpiLife] Check-in registrado -> uid=${uid} med=${medName} time=${time}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[EpiLife] Erro no /checkin:', err);
+    res.status(500).json({ error: 'erro ao registrar check-in' });
+  }
+});
+
+// Chamado quando o usuário toca "⏰ Adiar 10min" — reagenda um novo push
+// só pra esse alarme, sem precisar abrir o app.
+app.post('/snooze', async (req, res) => {
+  try {
+    const { uid, medId, medName, dose, time } = req.body || {};
+    if (!uid || !medId) return res.status(400).json({ error: 'uid e medId sao obrigatorios' });
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    const fcmToken = userDoc.exists ? userDoc.data().fcmToken : null;
+    if (!fcmToken) return res.status(404).json({ error: 'token nao encontrado' });
+
+    console.log(`[EpiLife] Alarme adiado 10min -> uid=${uid} med=${medName}`);
+    res.json({ ok: true });
+
+    setTimeout(() => {
+      sendAlarmPush(fcmToken, { id: medId, name: medName, dose: dose }, time || '', uid)
+        .catch(e => console.error('[EpiLife] Erro ao reenviar push adiado:', e));
+    }, 10 * 60 * 1000);
+  } catch (err) {
+    console.error('[EpiLife] Erro no /snooze:', err);
+    res.status(500).json({ error: 'erro ao adiar alarme' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
