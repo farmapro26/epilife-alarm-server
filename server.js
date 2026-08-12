@@ -61,10 +61,6 @@ function getNowSaoPaulo() {
 async function sendAlarmPush(fcmToken, med, time, uid) {
   const message = {
     token: fcmToken,
-    notification: {
-      title: '💊 Hora do remédio',
-      body: `${med.name}${med.dose ? ' — ' + med.dose : ''} (${time})`
-    },
     data: {
       type: 'ALARM',
       uid: uid,
@@ -74,13 +70,7 @@ async function sendAlarmPush(fcmToken, med, time, uid) {
       time: time
     },
     android: {
-      priority: 'high',
-      notification: {
-        sound: 'default',
-        channelId: 'epilife_alarms',
-        priority: 'max',
-        visibility: 'public'
-      }
+      priority: 'high'
     },
     apns: {
       headers: { 'apns-priority': '10' },
@@ -93,11 +83,7 @@ async function sendAlarmPush(fcmToken, med, time, uid) {
       }
     },
     webpush: {
-      headers: { Urgency: 'high' },
-      notification: {
-        requireInteraction: true,
-        vibrate: [300, 100, 300, 100, 300]
-      }
+      headers: { Urgency: 'high' }
     }
   };
 
